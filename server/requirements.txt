@@ -1,0 +1,7 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+sqlalchemy[asyncio]>=2.0.35
+asyncpg>=0.30.0          # PostgreSQL 驱动
+asyncmy>=0.2.9            # MySQL 驱动（切换时用）
+pydantic>=2.8.0
+python-dotenv>=1.0.0

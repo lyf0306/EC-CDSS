@@ -1,0 +1,314 @@
+/**
+ * src/assets/report-style.css
+ * ─────────────────────────────────────────────────────────────────────────────
+ * MDT 报告渲染全局样式表
+ *
+ * 原 TreatmentView.vue 中的 .streaming-content :deep(*) scoped 样式，
+ * 统一迁移为 .mdt-rendered * 全局选择器，供以下场景共用：
+ *   - MdtReportRenderer.vue 组件（用于页面内展示）
+ *   - EvidenceView 导出预览弹窗
+ *   - 导出 PDF / Word 的 <style> 注入
+ *
+ * 在 main.js 中 `import '@/assets/report-style.css'` 全局引入。
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/* ─── 容器基础 ─────────────────────────────────────────────────────────────── */
+.mdt-rendered {
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--text-primary, #0f172a);
+  font-family: var(--font-body, "Inter", "Noto Sans SC", -apple-system, sans-serif);
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* ─── 标题 ─────────────────────────────────────────────────────────────────── */
+.mdt-rendered h1 {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: var(--font-serif, "Noto Serif SC", Georgia, serif);
+  color: var(--text-primary, #0f172a);
+  margin: 28px 0 18px;
+  padding: 0 0 10px 14px;
+  border-bottom: 2px solid var(--accent-blue, #3b82f6);
+  border-left: 4px solid var(--accent-blue, #3b82f6);
+  border-radius: 2px 0 0 0;
+  display: block;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-height: 1.5;
+}
+.mdt-rendered h1::before { display: none; }
+
+.mdt-rendered h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+  margin: 28px 0 0;
+  padding: 8px 12px;
+  background: var(--accent-blue-light, rgba(59, 130, 246, 0.08));
+  border-left: 3px solid var(--accent-blue, #3b82f6);
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+  display: block;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-height: 1.6;
+}
+.mdt-rendered h2 + * {
+  margin-top: 20px !important;
+  padding-top: 0 !important;
+}
+
+.mdt-rendered h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-blue, #3b82f6);
+  margin: 18px 0 8px;
+  padding-left: 14px;
+  position: relative;
+  display: block;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-height: 1.6;
+}
+.mdt-rendered h3::before {
+  content: '';
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  background: var(--accent-blue, #3b82f6);
+  border-radius: 50%;
+}
+
+.mdt-rendered h4 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary, #475569);
+  margin: 14px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: block;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.mdt-rendered h5 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+  margin: 16px 0 8px;
+  padding: 6px 0 6px 12px;
+  border-left: 3px solid var(--accent-teal, #14b8a6);
+  display: block;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-height: 1.55;
+}
+
+/* ─── 段落 ─────────────────────────────────────────────────────────────────── */
+.mdt-rendered p {
+  margin: 0 0 12px;
+  line-height: 1.85;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.mdt-rendered h1 + p,
+.mdt-rendered h3 + p,
+.mdt-rendered h4 + p {
+  margin-top: 6px;
+}
+
+/* ─── 无序列表 ─────────────────────────────────────────────────────────────── */
+.mdt-rendered ul,
+.mdt-rendered ol {
+  margin: 6px 0 14px;
+  padding-left: 0;
+  list-style: none;
+  display: block;
+}
+
+.mdt-rendered ul > li {
+  display: block;
+  position: relative;
+  padding-left: 16px;
+  font-size: 13px;
+  color: var(--text-secondary, #475569);
+  line-height: 1.65;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.mdt-rendered ul > li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  background: var(--accent-blue, #3b82f6);
+  border-radius: 50%;
+  display: block;
+}
+
+/* ─── 有序列表 ─────────────────────────────────────────────────────────────── */
+.mdt-rendered ol { counter-reset: ol-counter; }
+.mdt-rendered ol > li {
+  display: block;
+  position: relative;
+  padding-left: 26px;
+  font-size: 13px;
+  color: var(--text-secondary, #475569);
+  line-height: 1.65;
+  counter-increment: ol-counter;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.mdt-rendered ol > li::before {
+  content: counter(ol-counter);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: var(--accent-blue, #3b82f6);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* ─── 嵌套列表 ─────────────────────────────────────────────────────────────── */
+.mdt-rendered li { margin-bottom: 4px; }
+.mdt-rendered li > ul,
+.mdt-rendered li > ol {
+  margin: 6px 0 2px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--accent-blue-light, rgba(59, 130, 246, 0.2));
+}
+.mdt-rendered li > ul:first-child,
+.mdt-rendered li > ol:first-child { margin-top: 2px; }
+
+/* ─── 强调 / 斜体 ──────────────────────────────────────────────────────────── */
+.mdt-rendered strong { font-weight: 700; color: var(--text-primary, #0f172a); }
+.mdt-rendered em     { font-style: italic; color: var(--text-secondary, #475569); }
+
+/* ─── 分割线 ────────────────────────────────────────────────────────────────── */
+.mdt-rendered hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent-blue-mid, rgba(59, 130, 246, 0.3)), transparent);
+  margin: 20px 0;
+}
+
+/* ─── 引用块 ────────────────────────────────────────────────────────────────── */
+.mdt-rendered blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  background: var(--accent-blue-light, rgba(59, 130, 246, 0.08));
+  border-left: 3px solid var(--accent-blue, #3b82f6);
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+  font-size: 13px;
+  color: var(--text-secondary, #475569);
+  line-height: 1.65;
+}
+.mdt-rendered blockquote p { margin: 0; }
+
+/* ─── 行内代码 ──────────────────────────────────────────────────────────────── */
+.mdt-rendered code {
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", Consolas, monospace);
+  font-size: 12px;
+  background: var(--bg-2, #f1f5f9);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--accent-blue, #3b82f6);
+}
+
+/* ─── 代码块 ────────────────────────────────────────────────────────────────── */
+.mdt-rendered pre {
+  background: var(--bg-2, #f1f5f9);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.mdt-rendered pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-secondary, #475569);
+}
+
+/* ─── 表格 ──────────────────────────────────────────────────────────────────── */
+.mdt-rendered table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+  border: 1px solid var(--border, #e2e8f0);
+}
+.mdt-rendered thead tr { background: var(--accent-blue, #3b82f6); }
+.mdt-rendered thead th {
+  padding: 8px 12px;
+  text-align: left;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.mdt-rendered tbody tr {
+  border-top: 1px solid var(--border, #e2e8f0);
+  transition: background 0.1s;
+}
+.mdt-rendered tbody tr:hover {
+  background: var(--accent-blue-light, rgba(59, 130, 246, 0.08));
+}
+.mdt-rendered tbody td {
+  padding: 7px 12px;
+  color: var(--text-secondary, #475569);
+  vertical-align: top;
+}
+.mdt-rendered tbody tr:nth-child(even) {
+  background: var(--bg-1, #f8fafc);
+}
+
+/* ─── 报告分节装饰（用于合并报告的章节分隔线） ────────────────────────────── */
+.mdt-report-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 36px 0 28px;
+}
+.mdt-report-section-divider::before,
+.mdt-report-section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-blue-mid, rgba(59, 130, 246, 0.3)), transparent);
+}
+.mdt-report-section-divider span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+  padding: 0 8px;
+}
