@@ -4,12 +4,12 @@
  * 测试网络状态检测：初始值、online/offline 事件响应、生命周期清理。
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createApp, h, nextTick } from 'vue'
 import { useNetworkStatus } from '@/composables/useNetworkStatus.js'
 
 /**
- * 辅助：挂载 composable 到临时 Vue app，返回 result 和 app 用来卸载
+ * 辅助：挂载 composable 到临时 Vue app
  */
 function mountComposable(composable) {
   let result
@@ -24,30 +24,38 @@ function mountComposable(composable) {
   return { result, app, container }
 }
 
+/** 仅修改 navigator.onLine 而不替换整个 navigator 对象 */
+function setOnLine(value) {
+  Object.defineProperty(navigator, 'onLine', {
+    configurable: true,
+    get: () => value,
+  })
+}
+
 describe('useNetworkStatus', () => {
-  let originalOnLine
+  let originalDescriptor
 
   beforeEach(() => {
-    originalOnLine = Object.getOwnPropertyDescriptor(navigator, 'onLine')
+    originalDescriptor = Object.getOwnPropertyDescriptor(navigator, 'onLine')
+        || { configurable: true, get: () => true }
   })
 
   afterEach(() => {
-    // 恢复 navigator.onLine
-    if (originalOnLine) {
-      Object.defineProperty(navigator, 'onLine', originalOnLine)
+    if (originalDescriptor) {
+      Object.defineProperty(navigator, 'onLine', originalDescriptor)
     }
   })
 
   // ── 初始状态 ──────────────────────────────────────────────
   it('isOnline 初始值与 navigator.onLine 一致 (online=true)', () => {
-    vi.stubGlobal('navigator', { onLine: true })
+    setOnLine(true)
     const { result, app } = mountComposable(useNetworkStatus)
     expect(result.isOnline.value).toBe(true)
     app.unmount()
   })
 
   it('isOnline 初始值与 navigator.onLine 一致 (online=false)', () => {
-    vi.stubGlobal('navigator', { onLine: false })
+    setOnLine(false)
     const { result, app } = mountComposable(useNetworkStatus)
     expect(result.isOnline.value).toBe(false)
     app.unmount()
@@ -55,7 +63,7 @@ describe('useNetworkStatus', () => {
 
   // ── 事件响应 ──────────────────────────────────────────────
   it('收到 offline 事件后 isOnline 变为 false', async () => {
-    vi.stubGlobal('navigator', { onLine: true })
+    setOnLine(true)
     const { result, app } = mountComposable(useNetworkStatus)
     expect(result.isOnline.value).toBe(true)
 
@@ -67,7 +75,7 @@ describe('useNetworkStatus', () => {
   })
 
   it('收到 online 事件后 isOnline 恢复为 true', async () => {
-    vi.stubGlobal('navigator', { onLine: false })
+    setOnLine(false)
     const { result, app } = mountComposable(useNetworkStatus)
     expect(result.isOnline.value).toBe(false)
 
@@ -79,7 +87,7 @@ describe('useNetworkStatus', () => {
   })
 
   it('连续 online → offline → online 正确切换', async () => {
-    vi.stubGlobal('navigator', { onLine: true })
+    setOnLine(true)
     const { result, app } = mountComposable(useNetworkStatus)
 
     window.dispatchEvent(new Event('offline'))
@@ -99,17 +107,14 @@ describe('useNetworkStatus', () => {
 
   // ── 生命周期：卸载后不再响应事件 ──────────────────────────
   it('组件卸载后事件监听器已移除，不再响应', async () => {
-    vi.stubGlobal('navigator', { onLine: true })
+    setOnLine(true)
     const { result, app } = mountComposable(useNetworkStatus)
 
     app.unmount()
 
-    // 卸载后触发 offline — isOnline 不应该改变（监听器已移除）
+    // 卸载后再触发 — isOnline 不应变化
     window.dispatchEvent(new Event('offline'))
     await nextTick()
-    // 注意：Vue ref 仍然可读，但值不应因卸载后事件而更新
-    // 实际上由于 addEventListener 的回调已被 removeEventListener 移除，
-    // isOnline 保持卸载前的值
     expect(result.isOnline.value).toBe(true)
   })
 })
