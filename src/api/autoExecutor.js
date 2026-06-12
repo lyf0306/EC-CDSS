@@ -8,24 +8,12 @@
  */
 
 import { apiFigoStage, apiProfileOnly, apiAnalyzeStream, apiEbmSubmit, apiEbmJobStatus, apiEbmJobResult } from './index.js'
+import { withCancel } from '@/utils/withCancel.js'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** 延迟工具 */
 const delay = ms => new Promise(r => setTimeout(r, ms))
-
-/** 创建可取消的 Promise（外部 AbortController 触发 reject） */
-function withCancel(promise, signal) {
-  if (!signal) return promise
-  return new Promise((resolve, reject) => {
-    const onAbort = () => reject(new DOMException('Cancelled', 'AbortError'))
-    signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(
-      v => { signal.removeEventListener('abort', onAbort); resolve(v) },
-      e => { signal.removeEventListener('abort', onAbort); reject(e) }
-    )
-  })
-}
 
 // ── Phase 1: FIGO Staging ───────────────────────────────────────────────────
 

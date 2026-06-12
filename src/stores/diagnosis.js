@@ -3,6 +3,7 @@ import { ref, computed, reactive, watch } from 'vue'
 import { caseStorage, forceFlushPatchBuffer, appendBackgroundMdtToken, consumeBackgroundMdtText } from '@/api/caseStorage.js'
 import { runFigoStage, runProfileOnly, runMdtStream, resumeEbmPolling } from '@/api/autoExecutor.js'
 import { apiEbmSubmit } from '@/api/index.js'
+import { withCancel } from '@/utils/withCancel.js'
 
 export const useDiagnosisStore = defineStore('diagnosis', () => {
   // ── Mode ──────────────────────────────────────────────────
@@ -25,7 +26,7 @@ export const useDiagnosisStore = defineStore('diagnosis', () => {
   const autoQueue = ref(_restoreAutoQueue())
   const autoConcurrency = ref(parseInt(localStorage.getItem('oncology_auto_cc') || '2'))
   const autoRunning = ref(new Set())  // 正在执行的 caseId 集合
-  const autoViewingCase = ref(_restoreAutoViewing())  // 自动模式下正在查看某个已完成病例（sessionStorage + localStorage 双重持久化，刷新不丢）
+  const autoViewingCase = ref(_restoreAutoViewing())  // 自动模式下正在查看某个已完成病例（sessionStorage 持久化，标签页内刷新不丢）
   let _autoQueueBusy = false  // 队列调度锁，防重入
 
   // ── 自动队列实时时钟（store 级，导航不中断） ──────────────
@@ -87,12 +88,9 @@ export const useDiagnosisStore = defineStore('diagnosis', () => {
     } catch { return [] }
   }
 
-  // 双重持久化恢复 autoViewingCase：sessionStorage（标签页级）优先，localStorage（兜底）
+  // 恢复 autoViewingCase：仅 sessionStorage（标签页级行为，不需要 localStorage 备份）
   function _restoreAutoViewing() {
-    const session = sessionStorage.getItem('oncology_auto_viewing')
-    if (session !== null) return session === 'true'
-    const local = localStorage.getItem('oncology_auto_viewing_fallback')
-    return local === 'true'
+    return sessionStorage.getItem('oncology_auto_viewing') === 'true'
   }
 
   
@@ -149,18 +147,7 @@ export const useDiagnosisStore = defineStore('diagnosis', () => {
     localStorage.setItem(AUTO_QUEUE_KEY, JSON.stringify(slim))
   }
 
-  /** AbortSignal 包装 — 使 Promise 可取消 */
-  function _withCancel(promise, signal) {
-    if (!signal) return promise
-    return new Promise((resolve, reject) => {
-      const onAbort = () => reject(new DOMException('Cancelled', 'AbortError'))
-      signal.addEventListener('abort', onAbort, { once: true })
-      promise.then(
-        v => { signal.removeEventListener('abort', onAbort); resolve(v) },
-        e => { signal.removeEventListener('abort', onAbort); reject(e) }
-      )
-    })
-  }
+  // withCancel: 见 src/utils/withCancel.js，autoExecutor.js 和此处共用
 
   // ── Step 1: Input ─────────────────────────────────────────
   const pathologyText = ref('')
@@ -769,7 +756,9 @@ export const useDiagnosisStore = defineStore('diagnosis', () => {
     // 追加 token 到 caseStorage 的后台文本缓存（模块级 Map，不触发 HTTP）
     appendBackgroundMdtToken(caseId, token)
     // 标记 streaming 状态（通过 debounced patch，不夹带 mdtStreamText）
-    caseStorage.patchCase(caseId, { mdtStreaming: true }).catch(() => {})
+    caseStorage.patchCase(caseId, { mdtStreaming: true }).catch(e =>
+      console.error('[Store] 后台标记 streaming 失败:', e.message)
+    )
   }
 
   /** 后台流完成：把 analysisResult / mdtReport 写入指定病例槽位 */
@@ -1152,7 +1141,7 @@ export const useDiagnosisStore = defineStore('diagnosis', () => {
 
         // 提交新任务或复用已保存的 jobId（断点续跑）
         if (!ebmJobId) {
-          const submitRes = await _withCancel(apiEbmSubmit(treatmentContext), signal)
+          const submitRes = await withCancel(apiEbmSubmit(treatmentContext), signal)
           ebmJobId = submitRes.job_id
           entry._ebmJobId = ebmJobId
           _flushQueueNow()  // ⚡ 关键：jobId 落盘后才能断点续跑
@@ -1447,7 +1436,6 @@ export const useDiagnosisStore = defineStore('diagnosis', () => {
   // 双重持久化：sessionStorage（标签页级，主存储）+ localStorage（兜底，跨标签页刷新不丢）
   watch(autoViewingCase, (v) => {
     sessionStorage.setItem('oncology_auto_viewing', v ? 'true' : 'false')
-    localStorage.setItem('oncology_auto_viewing_fallback', v ? 'true' : 'false')
   }, { flush: 'sync' })
   // HMR-safe：先移除旧监听器，避免模块热重载时重复累积
   const BEFOREUNLOAD_KEY = '__onco_beforeunload'
@@ -1470,10 +1458,9 @@ export const useDiagnosisStore = defineStore('diagnosis', () => {
       _ebmResult: e._ebmResult || null,
     }))
     localStorage.setItem(AUTO_QUEUE_KEY, JSON.stringify(slim))
-    // beforeunload 中再次显式持久化 autoViewingCase，双保险
+    // 显式持久化 autoViewingCase（sessionStorage），防止 watch 未触发
     const v = autoViewingCase.value
     sessionStorage.setItem('oncology_auto_viewing', v ? 'true' : 'false')
-    localStorage.setItem('oncology_auto_viewing_fallback', v ? 'true' : 'false')
   }
   window.addEventListener('beforeunload', window[BEFOREUNLOAD_KEY])
 
