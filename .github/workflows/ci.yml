@@ -20,9 +20,9 @@ jobs:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:
           node-version: 22
-          cache: npm
 
-      - run: npm ci
+      # 使用 install 而非 ci：lock 文件在 Windows 上生成，ci 在 Ubuntu 可能冲突
+      - run: npm install
 
       - run: npm test
 
@@ -40,8 +40,7 @@ jobs:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:
           node-version: 22
-          cache: npm
 
-      - run: npm ci
+      - run: npm install
 
       - run: npm run build
