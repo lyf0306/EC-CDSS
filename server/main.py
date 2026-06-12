@@ -8,16 +8,23 @@ import logging
 import os
 import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
 
-from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import get_current_user
-from database import get_db, init_db, make_upsert_stmt
+from config import (
+    CORS_ORIGINS,
+    RATE_LIMIT_ENABLED,
+    RATE_LIMIT_REQUESTS,
+    RATE_LIMIT_WINDOW,
+)
+from database import engine, get_db, init_db, make_upsert_stmt
 from models import AppState, Case
 from schemas import (
     ActiveCaseRequest,
@@ -41,7 +48,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("case-storage")
 
-load_dotenv()
+
+# ═══════════════════════════════════════════════════════════════
+# 工具函数
+# ═══════════════════════════════════════════════════════════════
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -58,7 +68,43 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-# ── Lifespan ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# 速率限制中间件（内存实现，重启清零）
+# ═══════════════════════════════════════════════════════════════
+
+
+class RateLimiter:
+    """基于滑动窗口的速率限制器。
+
+    按用户 ID 分桶（Mock 模式下所有请求共用一个桶）。
+    单进程内存存储，不依赖 Redis。
+    """
+
+    def __init__(self, max_requests: int, window_seconds: int):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._buckets: dict[str, list[float]] = defaultdict(list)
+
+    def _prune(self, key: str, now: float) -> None:
+        """移除窗口外的旧记录"""
+        cutoff = now - self.window_seconds
+        self._buckets[key] = [t for t in self._buckets[key] if t > cutoff]
+
+    def is_allowed(self, key: str) -> bool:
+        now = time.monotonic()
+        self._prune(key, now)
+        if len(self._buckets[key]) >= self.max_requests:
+            return False
+        self._buckets[key].append(now)
+        return True
+
+
+_rate_limiter = RateLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Lifespan
+# ═══════════════════════════════════════════════════════════════
 
 
 @asynccontextmanager
@@ -67,15 +113,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("数据库初始化完成，开始接收请求")
     yield
-    # 优雅关闭
     logger.info("收到关闭信号，释放数据库连接...")
-    from database import engine
-
     await engine.dispose()
     logger.info("数据库连接已释放，服务关闭")
 
 
-# ── App ──────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# App
+# ═══════════════════════════════════════════════════════════════
 
 app = FastAPI(
     title="Oncology Aid — Case Storage API",
@@ -83,25 +128,50 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — 生产部署时收紧 allow_origins 为前端域名
+# CORS — 生产部署时通过 .env 的 CORS_ORIGINS 指定前端域名
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── 请求追踪中间件 ─────────────────────────────────────
+# ── 请求追踪 + 速率限制中间件 ──────────────────────────
 
 
 @app.middleware("http")
 async def request_middleware(request: Request, call_next):
-    """每个请求注入 X-Request-ID + 记录耗时 + 异常捕获"""
+    """每个请求：注入 X-Request-ID + 速率限制 + 记录耗时 + 异常捕获"""
     rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
     request.state.request_id = rid
     start = time.monotonic()
+
+    # 速率限制（仅 API 路由，跳过健康检查）
+    if RATE_LIMIT_ENABLED and request.url.path != "/api/health":
+        # 按 X-User-Id 或客户端 IP 分桶
+        user_key = (
+            request.headers.get("X-User-Id")
+            or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or request.client.host
+            if request.client
+            else "unknown"
+        )
+        if not _rate_limiter.is_allowed(user_key):
+            elapsed = (time.monotonic() - start) * 1000
+            logger.warning(
+                "%s %s → 429  %.0fms  [RATE-LIMITED] user=%s",
+                request.method,
+                request.url.path,
+                elapsed,
+                user_key,
+            )
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "请求过于频繁，请稍后重试"},
+                headers={"X-Request-ID": rid, "Retry-After": str(RATE_LIMIT_WINDOW)},
+            )
 
     try:
         response = await call_next(request)
@@ -126,7 +196,9 @@ async def request_middleware(request: Request, call_next):
         raise
 
 
-# ── 路由 ────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# 路由
+# ═══════════════════════════════════════════════════════════════
 
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -269,7 +341,7 @@ async def save_case(
 ):
     """创建或 upsert 病例（原子操作，dialect 自适应，无竞态）。"""
     data = body.data or {}
-    now = int(os.environ.get("MOCK_TS", "0")) or int(__import__("time").time() * 1000)
+    now = int(os.environ.get("MOCK_TS", "0")) or int(time.time() * 1000)
 
     label = body.label or data.get("label", "未命名")
     step = data.get("currentStep", 1)

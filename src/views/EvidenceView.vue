@@ -420,6 +420,7 @@ import {
 import { caseStorage }        from '../api/caseStorage.js'
 import {
   splitEbmReport,
+  splitEbmBodySections,
   normalizeForDedup,
   trigramSimilarity,
   splitRefEntries,
@@ -811,6 +812,17 @@ function renumberEbmCitations(bodyText, ebmRefCount, kgCount) {
   return result
 }
 
+/**
+ * 仅对 EBM 正文的"核心临床试验"章节做引用编号偏移，
+ * "核心指南与共识"章节的编号保持原样不动。
+ */
+function renumberEbmBody(bodyText, ebmRefCount, kgCount) {
+  if (!bodyText || !ebmRefCount || !kgCount) return bodyText
+  const { beforeClinical, clinical } = splitEbmBodySections(bodyText)
+  if (!clinical) return bodyText  // 无临床试验章节，不做任何偏移
+  return beforeClinical + renumberEbmCitations(clinical, ebmRefCount, kgCount)
+}
+
 // ── EBM 报告内联渲染（hero card） ────────────────────────────────────────────
 
 /** 在 hero card 中渲染 EBM 深搜报告：正文引用编号偏移 + 参考文献连续编号 */
@@ -822,10 +834,10 @@ const ebmReportHtml = computed(() => {
   const kgCount = ebmKgRefCount.value
 
   let html = ''
-  // 正文：引用编号偏移
+  // 正文：仅"核心临床试验"章节引用编号偏移
   if (body) {
     const renumberedBody = (kgCount > 0 && ebmRefCount > 0)
-      ? renumberEbmCitations(body, ebmRefCount, kgCount)
+      ? renumberEbmBody(body, ebmRefCount, kgCount)
       : body
     html += renderMd(renumberedBody)
   }
@@ -1195,7 +1207,7 @@ const fullReportMarkdown = computed(() => {
     const kgCount = ebmKgRefCount.value
     const ebmRefCount = ebmRefEntries.length
     const ebmBodyRenumbered = (kgCount > 0 && ebmRefCount > 0)
-      ? renumberEbmCitations(body, ebmRefCount, kgCount)
+      ? renumberEbmBody(body, ebmRefCount, kgCount)
       : body
     lines.push(ebmBodyRenumbered)
     lines.push('\n---\n')
@@ -1274,7 +1286,7 @@ const fullReportHtml = computed(() => {
       const kgCount = ebmKgRefCount.value
       const ebmRefCount = ebmRefEntriesHtml.length
       const renumberedBody = (kgCount > 0 && ebmRefCount > 0)
-        ? renumberEbmCitations(body, ebmRefCount, kgCount)
+        ? renumberEbmBody(body, ebmRefCount, kgCount)
         : body
       ebmBodyHtml = renderMd(renumberedBody)
     }

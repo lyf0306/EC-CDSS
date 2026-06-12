@@ -1,31 +1,30 @@
 """数据库连接 — SQLAlchemy 2.0 async engine + session factory"""
 
-import os
 from typing import Any, Dict, List
 
-from dotenv import load_dotenv
-from sqlalchemy import Table
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from models import Base
-
-load_dotenv()
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://admin:123456@10.60.146.99:5432/oncology_aid",
+from config import (
+    DATABASE_URL,
+    DB_COMMAND_TIMEOUT,
+    DB_MAX_OVERFLOW,
+    DB_POOL_RECYCLE,
+    DB_POOL_SIZE,
+    DB_POOL_TIMEOUT,
 )
+from models import Base
 
 engine = create_async_engine(
     DATABASE_URL,
-    pool_size=10,            # 常规并发连接数
-    max_overflow=20,         # 突发峰值可额外借出 20 个（合计 ≤30）
-    pool_recycle=3600,       # 1h 后回收连接，防数据库端主动断开
-    pool_pre_ping=True,      # 取出连接前先 SELECT 1 探活
-    pool_timeout=10,         # 等待可用连接的超时秒数（超时抛错，不无限挂起）
+    pool_size=DB_POOL_SIZE,
+    max_overflow=DB_MAX_OVERFLOW,
+    pool_recycle=DB_POOL_RECYCLE,
+    pool_pre_ping=True,
+    pool_timeout=DB_POOL_TIMEOUT,
     connect_args={
-        "timeout": 10,       # asyncpg: 建立 TCP 连接超时
-        "command_timeout": 30,  # asyncpg: 单条 SQL 执行上限
+        "timeout": 10,
+        "command_timeout": DB_COMMAND_TIMEOUT,
     },
     echo=False,
 )
@@ -41,8 +40,8 @@ def make_upsert_stmt(
     """生成原子 upsert 语句，自动适配 PostgreSQL / MySQL。
 
     参数:
-        model:     SQLAlchemy ORM 模型类
-        values:    要 INSERT 的完整列值 dict
+        model:           SQLAlchemy ORM 模型类
+        values:          INSERT 的完整列值 dict
         constraint_cols: 唯一约束列名列表（如 ["id"] 或 ["key"]）
 
     PostgreSQL → INSERT ... ON CONFLICT ... DO UPDATE
@@ -75,21 +74,13 @@ def make_upsert_stmt(
 
 
 async def init_db() -> None:
-    """启动时建表/迁移（不删数据，仅创建不存在的表/列）"""
+    """启动时建表（幂等：仅创建不存在的表，不修改已有表结构）。
+
+    Schema 变更请通过 Alembic 管理：
+      cd server && alembic upgrade head
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # 为已有表添加 user_id 列（迁移：旧表无此列）
-        await conn.execute(
-            __import__("sqlalchemy").text(
-                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT 'default-user-001'"
-            )
-        )
-        # 为新加的 user_id 列创建索引（如果不存在）
-        await conn.execute(
-            __import__("sqlalchemy").text(
-                "CREATE INDEX IF NOT EXISTS ix_cases_user_id ON cases (user_id)"
-            )
-        )
 
 
 async def get_db() -> AsyncSession:

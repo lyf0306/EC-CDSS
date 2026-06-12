@@ -13,50 +13,36 @@
 
   2. 将剪贴板内容保存为 migration_input.json
 
-  3. 运行：python server/migrate_localstorage.py migration_input.json
+  3. 确保 server/.env 中的 DATABASE_URL 正确
 
-  4. 确认输出 "迁移完成: N 个病例已导入"
+  4. 运行：python server/migrate_localstorage.py migration_input.json
+
+  5. 确认输出 "迁移完成: N 个病例已导入"
 """
 
 import json
-import sys
 import os
+import sys
 from datetime import datetime, timezone
 
-# 尝试导入 psycopg2（同步驱动，适合一次性脚本）
-try:
-    import psycopg2
-except ImportError:
-    print("请先安装 psycopg2: pip install psycopg2-binary")
-    sys.exit(1)
+import psycopg2
 
-# 如果安装了 dotenv，加载 .env
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
-except ImportError:
-    pass
+from config import ALEMBIC_DATABASE_URL
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://admin:123456@10.60.146.99:5432/oncology_aid",
-)
 
 # ── 解析 DATABASE_URL ──────────────────────────────────────
 
 
-def parse_db_url(url: str) -> dict:
+def _parse_db_url(url: str) -> dict:
     """将 postgresql://user:pass@host:port/db 拆分为 psycopg2 连接参数"""
-    # 移除协议前缀
     url = url.replace("postgresql://", "").replace("postgresql+asyncpg://", "")
-    # 分离认证和主机
     auth_host, _, dbname = url.partition("/")
     user_pass, _, host_port = auth_host.partition("@")
     user, _, password = user_pass.partition(":")
-    host, _, port = host_port.partition(":")
+    host, _, port_str = host_port.partition(":")
     return {
         "host": host,
-        "port": int(port) if port else 5432,
+        "port": int(port_str) if port_str else 5432,
         "user": user,
         "password": password,
         "dbname": dbname,
@@ -70,13 +56,11 @@ def migrate(input_path: str) -> None:
     with open(input_path, "r", encoding="utf-8") as f:
         raw = json.load(f)
 
-    # 解析 index（localStorage 存的是 JSON 字符串）
     index_str = raw.get("index", "[]")
     index = json.loads(index_str) if isinstance(index_str, str) else index_str
 
     active_id = raw.get("active", "")
 
-    # 解析 case blobs
     case_blobs = []
     for item in raw.get("cases", []):
         if isinstance(item, str):
@@ -86,15 +70,13 @@ def migrate(input_path: str) -> None:
 
     print(f"索引中有 {len(index)} 条记录，{len(case_blobs)} 个完整槽位")
 
-    # 连接数据库
-    conn_params = parse_db_url(DATABASE_URL)
+    conn_params = _parse_db_url(ALEMBIC_DATABASE_URL)
     print(f"连接 PostgreSQL: {conn_params['host']}:{conn_params['port']}/{conn_params['dbname']}")
 
     conn = psycopg2.connect(**conn_params)
     cur = conn.cursor()
 
     try:
-        # 建表（幂等）
         cur.execute("""
             CREATE TABLE IF NOT EXISTS cases (
                 id          TEXT PRIMARY KEY,
@@ -121,7 +103,6 @@ def migrate(input_path: str) -> None:
 
             data = blob["data"]
             case_id = data.get("_caseId") or blob.get("id") or ""
-            # 如果 data 里没有 id，尝试从 index 中匹配
             if not case_id:
                 label = blob.get("label", "")
                 for meta in index:
@@ -130,9 +111,10 @@ def migrate(input_path: str) -> None:
                         break
 
             if not case_id:
-                # 最后手段：从 blob 内容生成
                 import hashlib
-                case_id = "c" + hashlib.md5(json.dumps(data, sort_keys=True).encode()).hexdigest()[:12]
+                case_id = "c" + hashlib.md5(
+                    json.dumps(data, sort_keys=True).encode()
+                ).hexdigest()[:12]
                 print(f"⚠ 无法确定病例 ID，自动生成: {case_id}")
 
             label = blob.get("label", data.get("label", "未命名"))
@@ -149,7 +131,6 @@ def migrate(input_path: str) -> None:
                 or ""
             )
 
-            # Upsert
             cur.execute(
                 """
                 INSERT INTO cases (id, label, saved_at, step, has_result, figo_stage, data)
@@ -168,7 +149,6 @@ def migrate(input_path: str) -> None:
             imported += 1
             print(f"  ✓ {case_id} — {label}")
 
-        # 设置 active case
         if active_id:
             cur.execute(
                 """

@@ -70,6 +70,28 @@ export function splitEbmReport(text) {
   }
 }
 
+/**
+ * 将 EBM 报告正文沿"临床试验"章节边界拆分为前后两部分。
+ * 仅"核心临床试验及 PICO 循证解析"章节需要引用编号偏移，
+ * "核心指南与共识详尽解析"章节的引用编号保持原样。
+ *
+ * @returns {{ beforeClinical: string, clinical: string }}
+ */
+export function splitEbmBodySections(bodyText) {
+  if (!bodyText) return { beforeClinical: '', clinical: '' }
+
+  // 匹配 ##/### 级别标题，包含"临床试验"关键词
+  const headerRe = /^#{2,3}\s+(?:核心)?临床试验/m
+  const match = headerRe.exec(bodyText)
+
+  if (!match) return { beforeClinical: bodyText, clinical: '' }
+
+  return {
+    beforeClinical: bodyText.slice(0, match.index),
+    clinical: bodyText.slice(match.index),
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 3. 参考文献条目拆分
 // ═══════════════════════════════════════════════════════════════

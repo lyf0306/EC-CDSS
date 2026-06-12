@@ -1,7 +1,14 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 sqlalchemy[asyncio]>=2.0.35
-asyncpg>=0.30.0          # PostgreSQL 驱动
-asyncmy>=0.2.9            # MySQL 驱动（切换时用）
+asyncpg>=0.30.0              # PostgreSQL 异步驱动
 pydantic>=2.8.0
 python-dotenv>=1.0.0
+alembic>=1.14.0              # 数据库迁移管理
+psycopg2-binary>=2.9.9       # PostgreSQL 同步驱动（迁移脚本用）
+PyJWT>=2.9.0                 # JWT 鉴权（auth.py jwt 模式用）
+
+# ── 测试 ──────────────────────────────────────────────────
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+httpx>=0.28.0                # FastAPI TestClient 异步后端

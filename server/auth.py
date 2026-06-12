@@ -1,46 +1,58 @@
-"""Mock 单用户鉴权 — 单文件替换即可接入真实鉴权
+"""用户鉴权依赖 — 医院 IT 只需在本文件替换 get_current_user() 实现。
 
-医院 IT 接入步骤：
-1. 替换 get_current_user() 函数，验证 JWT / Session / Token
-2. 返回值为唯一用户标识字符串
-3. Case 表已含 user_id 列，查询自动按 user_id 隔离
+三种模式（通过 AUTH_MODE 环境变量切换）：
+  mock   — 所有请求视为同一用户（单机演示，默认）
+  header — 读取 X-User-Id 请求头作为用户标识
+  jwt    — 验证 Authorization: Bearer <token>（需配置 JWT_SECRET_KEY）
 
-当前 Mock 实现：
-- 前端每个浏览器生成唯一 workstation_id，通过 X-User-Id 请求头传递
-- 后端读取 X-User-Id 作为用户标识
-- 病例数据按 user_id 隔离，不同用户互不可见
-- 无 X-User-Id 时回退到 MOCK_USER_ID（向后兼容）
+部署切换时保持 get_current_user() 签名不变，路由层零改动。
 """
 
-from fastapi import Header
+from fastapi import Header, HTTPException
 
-# ── Mock 实现（部署时替换此函数即可） ──────────────────────
-
-MOCK_USER_ID = "default-user-001"
+from config import AUTH_MODE, JWT_ALGORITHM, JWT_SECRET_KEY, MOCK_USER_ID
 
 
 async def get_current_user(
-    authorization: str = Header(None),
-    x_user_id: str = Header(None, alias="X-User-Id"),
+    authorization: str | None = Header(None),
+    x_user_id: str | None = Header(None, alias="X-User-Id"),
 ) -> str:
-    """从请求头提取用户标识。
+    """从请求头提取用户标识，返回唯一用户 ID 字符串。
 
-    当前 Mock 实现：
-    1. 优先读取 X-User-Id 请求头（前端每个浏览器生成唯一 ID）
-    2. 其次读取 Authorization Bearer token
-    3. 回退到固定 MOCK_USER_ID
-
-    替换时保持函数签名和返回值类型不变即可——路由层零改动。
+    FastAPI 依赖注入用法:
+        @app.get("/api/xxx")
+        async def handler(user_id: str = Depends(get_current_user)):
+            ...
     """
-    # ── Mock: X-User-Id 客户端标识 ─────────────────
-    if x_user_id:
-        return x_user_id
+    if AUTH_MODE == "mock":
+        # 单用户模式：恒返回固定 ID
+        return MOCK_USER_ID
 
-    # ── 示例：接入真实 JWT 鉴权 ────────────────────
-    # if not authorization:
-    #     raise HTTPException(status_code=401, detail="未提供认证令牌")
-    # token = authorization.removeprefix("Bearer ")
-    # payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-    # return payload["sub"]
+    if AUTH_MODE == "header":
+        # 信任 X-User-Id 请求头（内网隔离 + 反向代理注入场景）
+        if x_user_id:
+            return x_user_id
+        raise HTTPException(status_code=401, detail="缺少 X-User-Id 请求头")
 
-    return MOCK_USER_ID
+    if AUTH_MODE == "jwt":
+        # JWT Bearer Token 验证
+        if not JWT_SECRET_KEY:
+            raise HTTPException(status_code=500, detail="JWT_SECRET_KEY 未配置")
+
+        if not authorization:
+            raise HTTPException(status_code=401, detail="未提供认证令牌")
+
+        token = authorization.removeprefix("Bearer ").strip()
+        if not token:
+            raise HTTPException(status_code=401, detail="令牌格式无效")
+
+        try:
+            import jwt
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            return payload.get("sub") or payload.get("user_id") or "unknown"
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="令牌已过期")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="令牌无效")
+
+    raise HTTPException(status_code=500, detail=f"未知鉴权模式: {AUTH_MODE}")

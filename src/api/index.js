@@ -3,10 +3,8 @@
  * Wraps /api/v1/* endpoints from pipeline_service.py + analyze.py
  */
 
-// const BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
-
-const BASE = import.meta.env.VITE_API_BASE || 'http://117.50.173.249:8050'
-const EBM_BASE = import.meta.env.VITE_EBM_BASE || 'http://117.50.173.249:8051'
+const BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8050'
+const EBM_BASE = import.meta.env.VITE_EBM_BASE || 'http://localhost:8051'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
