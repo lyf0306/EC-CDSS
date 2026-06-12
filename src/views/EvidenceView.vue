@@ -671,6 +671,173 @@ function getItemTitle(item) {
 const hasEvidence     = computed(() => primaryEvidenceList.value.length > 0)
 const bib             = computed(() => store.analysisResult?.bibliography ?? [])
 
+// ── MDT 报告清洗与展示 ──────────────────────────────────────────────────────
+
+/** Strip structured header prefix from evidence content, return the raw payload. */
+function _evidencePayload(content) {
+  if (!content) return ''
+  return content.replace(/^【权威循证溯源：[^】]+】\s*/g, '').trim()
+}
+
+/**
+ * 局部引用匹配归一化 — 去除所有标点，产生连续字符串用于子串匹配。
+ * 与 evidenceParser 的 normForCite（空格分隔）用途不同，不共用。
+ */
+function _normForCiteLocal(s) {
+  return s.replace(/\s+/g, ' ').replace(/[，,。.、;；:：""''""（）\(\)\[\]【】]/g, '').trim().toLowerCase()
+}
+
+/**
+ * 检查证据条目是否在 MDT 报告中已引用。
+ * 用 40 字符滑窗（步长 20）在归一化文本中探测出现。
+ */
+function _isItemCited(item, normReport) {
+  const payload = _evidencePayload(item.content || item.title || '')
+  if (!payload || payload.length < 15) return false
+  const normPayload = _normForCiteLocal(payload)
+  if (normReport.includes(normPayload.substring(0, Math.min(normPayload.length, 60)))) return true
+  const winLen = 40
+  if (normPayload.length <= winLen) return normReport.includes(normPayload)
+  for (let i = 0; i <= normPayload.length - winLen; i += 20) {
+    if (normReport.includes(normPayload.substring(i, i + winLen))) return true
+  }
+  return false
+}
+
+/**
+ * 清洗 MDT 报告文本以用于前端展示：
+ * 1. 移除 DeepSeek <think>…</think> 推理链
+ * 2. 移除 LLM 对话式前言（"好的，作为…专家…"）
+ * 3. 移除残留的 "---" 分隔线
+ */
+function cleanMdtReport(text) {
+  if (!text) return ''
+  let cleaned = text
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  const sepRe = /^([\s\S]*?)^---[ \t]*$/m
+  const sepMatch = sepRe.exec(cleaned)
+  if (sepMatch && sepMatch[1].length < 600 && cleaned.length - sepMatch[0].length > 60) {
+    cleaned = cleaned.slice(sepMatch.index + sepMatch[0].length)
+  } else {
+    const headerRe = /^[\s\S]*?^(?=#{1,3}\s+[一二三四五六七八九十\d]+[、.．])/m
+    const headerMatch = headerRe.exec(cleaned)
+    if (headerMatch && headerMatch[0].length < 600 && cleaned.length - headerMatch[0].length > 60) {
+      cleaned = cleaned.slice(headerMatch.index + headerMatch[0].length)
+    }
+  }
+  cleaned = cleaned.replace(/^\s*---[ \t]*\n+/, '')
+  cleaned = cleaned.replace(/^\s+/, '')
+  return cleaned
+}
+
+const treatmentReport    = computed(() => cleanMdtReport(store.mdtStreamText || ''))
+const treatmentReportRaw = computed(() => store.mdtStreamText || '')
+
+// ── 已引用证据筛选 ──────────────────────────────────────────────────────────
+const citedOnly = ref(true)
+
+const citedEvidenceIds = computed(() => {
+  const report = store.mdtStreamText || ''
+  if (!report) return new Set()
+  const normReport = _normForCiteLocal(report)
+  const ids = new Set()
+  for (const item of store.evidenceList) {
+    if (_isItemCited(item, normReport)) ids.add(item.id)
+  }
+  return ids
+})
+
+const citedEvidenceCount   = computed(() => citedEvidenceIds.value.size)
+const uncitedEvidenceCount = computed(() => store.evidenceList.length - citedEvidenceCount.value)
+
+// ── 参考文献解析（MDT 方案报告） ──────────────────────────────────────────────
+
+/** 结构化文献目录——来自 analysisResult.bibliography，优先级最高 */
+const structuredBib = computed(() => {
+  const bib = store.analysisResult?.bibliography
+  if (!bib || !bib.length) return []
+  return bib.map((e, i) => ({
+    id: i,
+    title: e.title || '',
+    content: e.title || '',
+    source: e.guidelines || '参考文献',
+    link: e.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${e.pmid}/` : '',
+    highlighted: false,
+    hidden: false,
+    _fromReport: true,
+  }))
+})
+
+/** 从 MDT 报告直接解析的参考文献（structuredBib 为空时回退） */
+const mdtReferences = ref([])
+
+watch(
+  () => store.mdtStreamText || store.ebmReport || '',
+  (reportText) => {
+    if (structuredBib.value.length > 0) {
+      mdtReferences.value = []
+      return
+    }
+    mdtReferences.value = parseMdtReferences(reportText)
+  },
+  { immediate: true }
+)
+
+/** 从 MDT 报告参考文献区段提取的所有 PMID */
+const mdtRefPmids = computed(() => {
+  const report = store.mdtStreamText || store.ebmReport || ''
+  return extractRefPmidsFromReport(report)
+})
+
+// ── 导出报告共享：KG 参考文献条数（统一编号偏移基准） ──────────────────────
+
+/** 导出的 KG 参考文献数量（非隐藏条目；当无结构化文献时应用 citedOnly） */
+const ebmKgRefCount = computed(() => {
+  let items = primaryEvidenceList.value.filter(e => !e.hidden)
+  if (citedOnly.value && !hasReportRefs.value) items = items.filter(e => citedEvidenceIds.value.has(e.id))
+  return items.length
+})
+
+/**
+ * 将 EBM 正文中的引用编号 [N] 统一偏移为 [kgCount+N]。
+ * 从高到低替换，避免 [1]→[7] 后被后续替换再次命中。
+ */
+function renumberEbmCitations(bodyText, ebmRefCount, kgCount) {
+  if (!bodyText || !ebmRefCount || !kgCount) return bodyText
+  let result = bodyText
+  for (let i = ebmRefCount; i >= 1; i--) {
+    result = result.replace(new RegExp(`\\[${i}\\]`, 'g'), `[${kgCount + i}]`)
+  }
+  return result
+}
+
+// ── EBM 报告内联渲染（hero card） ────────────────────────────────────────────
+
+/** 在 hero card 中渲染 EBM 深搜报告：正文引用编号偏移 + 参考文献连续编号 */
+const ebmReportHtml = computed(() => {
+  if (!store.ebmReport) return ''
+  const { body, refsText } = splitEbmReport(store.ebmReport)
+  const ebmRefEntries = parseEbmRefEntries(refsText)
+  const ebmRefCount = ebmRefEntries.length
+  const kgCount = ebmKgRefCount.value
+
+  let html = ''
+  // 正文：引用编号偏移
+  if (body) {
+    const renumberedBody = (kgCount > 0 && ebmRefCount > 0)
+      ? renumberEbmCitations(body, ebmRefCount, kgCount)
+      : body
+    html += renderMd(renumberedBody)
+  }
+  // 参考文献：偏移编号
+  if (ebmRefEntries.length > 0) {
+    html += buildEbmRefsOffsetHtml(ebmRefEntries, kgCount)
+  } else if (refsText) {
+    html += renderEbmRefs(refsText)
+  }
+  return html
+})
+
 /** Submit EBM deep-search job */
 async function startEbmSearch() {
   const mdtText = treatmentReportRaw.value  // use unfiltered raw text
@@ -1021,13 +1188,16 @@ const fullReportMarkdown = computed(() => {
   lines.push(`> ${metaParts.join('\u3000·\u3000')}\n`)
 
   // ── 循证医学深搜校验结果（仅正文，参考文献延后统一编号） ──
-  let ebmBodyText = ''
   let ebmRefEntries = []
   if (store.ebmReport) {
     const { body, refsText } = splitEbmReport(store.ebmReport)
-    ebmBodyText = body
     ebmRefEntries = parseEbmRefEntries(refsText)
-    lines.push(ebmBodyText)
+    const kgCount = ebmKgRefCount.value
+    const ebmRefCount = ebmRefEntries.length
+    const ebmBodyRenumbered = (kgCount > 0 && ebmRefCount > 0)
+      ? renumberEbmCitations(body, ebmRefCount, kgCount)
+      : body
+    lines.push(ebmBodyRenumbered)
     lines.push('\n---\n')
   }
 
@@ -1100,7 +1270,14 @@ const fullReportHtml = computed(() => {
   if (store.ebmReport) {
     const { body, refsText } = splitEbmReport(store.ebmReport)
     ebmRefEntriesHtml = parseEbmRefEntries(refsText)
-    if (body) ebmBodyHtml = renderMd(body)
+    if (body) {
+      const kgCount = ebmKgRefCount.value
+      const ebmRefCount = ebmRefEntriesHtml.length
+      const renumberedBody = (kgCount > 0 && ebmRefCount > 0)
+        ? renumberEbmCitations(body, ebmRefCount, kgCount)
+        : body
+      ebmBodyHtml = renderMd(renumberedBody)
+    }
   }
 
   // ── 二、循证证据与参考文献（统一连续编号） ──
